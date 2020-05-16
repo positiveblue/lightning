@@ -427,20 +427,16 @@ static char *opt_set_hsm_password(struct lightningd *ld)
 	return NULL;
 }
 
-/* Prompt the user to enter a password, from which will be derived the key used
- * for `hsm_secret` encryption.
- * The algorithm used to derive the key is Argon2(id), to which libsodium
- * defaults. However argon2id-specific constants are used in case someone runs
- * it with a libsodium version which default constants differs (typically
- * <1.0.9).
+/* Prompt the user to enter a mnemonic and passphrase for generating
+ * deterministic keys using BIP39. By default the hsmd will create a new wallet
+ * from a random mnemonic but if the user starts the node with the flag
+ * `--mnemonic-hsm` then s/he must to provide the mnemonic and passphrase during
+ * the node initialization.
  */
 static char *opt_set_hsm_mnemonic(struct lightningd *ld)
 {
 	struct termios current_term, temp_term;
 	ld->mnemonic_hsm = true;
-
-	// ld->config.mnemonic = tal(NULL, char *);
-	// ld->config.passphrase = tal(NULL, char *);
 
 	/* Don't swap the mnemonic/passphrase */
 	if (sodium_mlock(ld->config.mnemonic, sizeof(ld->config.mnemonic) != 0))
@@ -951,9 +947,10 @@ static void register_opts(struct lightningd *ld)
 	                   "Set the password to encrypt hsm_secret with. If no password is passed through command line, "
 	                   "you will be prompted to enter it.");
 
-	opt_register_noarg("--mnemonic-hsm-seed", opt_set_hsm_mnemonic, ld,
-			   "Use custom BIP39 mnemonic to derive the interna HD "
-			   "Wallet, you will be prompted to enter it.");
+	opt_register_noarg(
+	    "--mnemonic-hsm", opt_set_hsm_mnemonic, ld,
+	    "Use custom BIP39 mnemonic to derive the internal HD Wallet, "
+	    "you will be prompted to enter it.");
 
 	opt_register_arg("--rpc-file-mode", &opt_set_mode, &opt_show_mode,
 			 &ld->rpc_filemode,
@@ -1280,7 +1277,7 @@ static void add_config(struct lightningd *ld,
 		} else if (opt->cb == (void *)opt_set_hsm_password) {
 			json_add_bool(response, "encrypted-hsm", ld->encrypted_hsm);
 		} else if (opt->cb == (void *)opt_set_hsm_mnemonic) {
-			json_add_bool(response, "mnemonic-hsm-seed",
+			json_add_bool(response, "mnemonic-hsm",
 				      ld->mnemonic_hsm);
 		} else if (opt->cb == (void *)opt_set_wumbo) {
 			json_add_bool(response, "wumbo",
