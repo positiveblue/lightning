@@ -640,6 +640,31 @@ def test_hsm_secret_encryption(node_factory):
 
 
 @unittest.skipIf(VALGRIND, "It does not play well with prompt and key derivation.")
+def test_hsm_custom_mnemonic(node_factory):
+    l1 = node_factory.get_node()
+    mnemonic = ("echo ticket hold trophy clock essence pass able tape magnet "
+                "then basket acid country donate happy lawn reflect potato "
+                "close this spatial shaft you")
+    master_fd, slave_fd = os.openpty()
+
+    # Test creating the wallet with custom mnemonic
+    l1.stop()
+    l1.daemon.opts.update({"mnemonic-hsm-seed": None})
+    l1.daemon.start(stdin=slave_fd, wait_for_initialized=False)
+
+    os.write(master_fd, mnemonic.encode("utf-8"))
+    l1.daemon.wait_for_log("Server started with public key")
+    id = l1.rpc.getinfo()["id"]
+    l1.stop()
+
+    # Test running lightningd after wallet was created
+    l1.daemon.opts.pop("mnemonic-hsm-seed")
+    l1.daemon.start(wait_for_intialized=False)
+    l1.daemon.wait_for_log("Server started with public key")
+    assert id == l1.rpc.getinfo()["id"]
+
+
+@unittest.skipIf(VALGRIND, "It does not play well with prompt and key derivation.")
 def test_hsmtool_secret_decryption(node_factory):
     l1 = node_factory.get_node()
     password = "reckless\n"
