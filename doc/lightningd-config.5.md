@@ -204,6 +204,11 @@ If set, you will be prompted to enter a password used to encrypt the `hsm_secret
 Note that once you encrypt the `hsm_secret` this option will be mandatory for
 `lightningd` to start.
 
+
+ **mnemonic-hsm**
+If set, you will be prometed to enter a list of 24 words plus a passphrase.
+The wallet will be dreived from it using BIP39.
+
 ### Lightning node customization options
 
  **alias**=*NAME*
