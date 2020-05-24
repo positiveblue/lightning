@@ -71,12 +71,13 @@ struct config {
 	/* This is the key we use to encrypt `hsm_secret`. */
 	struct secret *keypass;
 
+    struct mnemonic *mnemonic_code;
 	/* This is the mnemonic words for BIP39. */
-	char mnemonic[BIP39_WORDLIST_LEN];
+	//char *mnemonic[BIP39_WORDLIST_LEN];
 
 	/* This is the passphrase used during the BIP39 wallet generation. We
 	 * set a limitation of 255 characters */
-	char passphrase[255];
+	//char *passphrase[255];
 };
 
 typedef STRMAP(const char *) alt_subdaemon_map;

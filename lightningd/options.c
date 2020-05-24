@@ -437,66 +437,61 @@ static char *opt_set_hsm_mnemonic(struct lightningd *ld)
 {
 	struct termios current_term, temp_term;
 	ld->mnemonic_hsm = true;
-
-	/* Don't swap the mnemonic/passphrase */
-	if (sodium_mlock(ld->config.mnemonic, sizeof(ld->config.mnemonic) != 0))
-		return "Could not lock hsm mnemonic memory.";
-
-	if (sodium_mlock(ld->config.passphrase,
-			 sizeof(ld->config.passphrase) != 0))
-		return "Could not lock hsm passphrase memory.";
+	ld->config.mnemonic_code = tal(NULL, struct mnemonic);
 
 	printf("The hsm_secret will be derived using the mnemonic and "
 	       "passphrase following the BIP39 standard.\n");
+        printf("Introduce the 24 word list separated by spaces: ");
 	char word[50];
 	uint n_words;
-
 	for (n_words = 0; n_words < 24; n_words++) {
-		printf("Enter word %i out of 24: ", n_words + 1);
 		scanf("%s", word);
 		/* We need to concat the strings using ' ' so libwally can
 		 * validate it */
 		if (n_words == 0) {
-			strcpy(ld->config.mnemonic, word);
+			strcpy(ld->config.mnemonic_code->words, word);
 		} else {
-			strcat(ld->config.mnemonic, " ");
-			strcat(ld->config.mnemonic, word);
+			strcat(ld->config.mnemonic_code->words, " ");
+			strcat(ld->config.mnemonic_code->words, word);
 		}
 	}
-	/* Pass NULL as the first parameter to use the default English list. */
-	if (bip39_mnemonic_validate(NULL, ld->config.mnemonic) != 0)
+        /* scanf() leaves the newline character in the input buffer */
+        getchar();
+        /* Pass NULL as the first parameter to use the default English list. */
+	if (bip39_mnemonic_validate(NULL, ld->config.mnemonic_code->words) != 0)
 		return "The mnemonic list of words is not valid";
 
+	/* Get the password from stdin, but don't echo it. */
 	if (tcgetattr(fileno(stdin), &current_term) != 0)
 		return "Could not get current terminal options.";
-
-	/* Get the passphrase from stdin, but don't echo it. */
 	temp_term = current_term;
 	temp_term.c_lflag &= ~ECHO;
 	if (tcsetattr(fileno(stdin), TCSAFLUSH, &temp_term) != 0)
-		return "Could not disable passphrase echoing.";
-
+		return "Could not disable password echoing.";
+	/* If we don't flush we might end up being buffered and we might seem
+	 * to hang while we wait for the password. */
 	printf("Warning: remember that different passphrase yield different "
 	       "bitcoin wallets.\n");
 	printf("Leave it empty for using the value by default (echo is "
 	       "disabled now).\n");
 	printf("Enter your passphrase: ");
 	fflush(stdout);
-
 	char *passphrase = NULL;
 	size_t passphrase_size;
+        
 	if (getline(&passphrase, &passphrase_size, stdin) < 0)
 		return "Could not read passphrase from stdin.";
-
+        printf("passphrase size: %ld\n", passphrase_size);
 	// Replace the last character which will always be \n
 	passphrase[strlen(passphrase) - 1] = '\0';
 
-	if (strlen(passphrase) > sizeof(ld->config.passphrase))
+	if (strlen(passphrase) > sizeof(ld->config.mnemonic_code->passphrase))
 		return "passphrase have a limit of 100 characters";
-	strcpy(ld->config.passphrase, passphrase);
+        strcpy(ld->config.mnemonic_code->passphrase, passphrase);
 	free(passphrase);
-
-	if (tcsetattr(fileno(stdin), TCSAFLUSH, &current_term) != 0)
+        printf("passphrase lenght: %ld", strlen(ld->config.mnemonic_code->passphrase));
+	
+        if (tcsetattr(fileno(stdin), TCSAFLUSH, &current_term) != 0)
 		return "Could not restore terminal options.";
 	printf("\n");
 

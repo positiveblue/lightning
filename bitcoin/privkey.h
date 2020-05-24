@@ -3,6 +3,7 @@
 #include "config.h"
 #include <ccan/short_types/short_types.h>
 #include <ccan/structeq/structeq.h>
+#include <wally_bip39.h>
 
 #define PRIVKEY_LEN 32
 
@@ -19,10 +20,18 @@ struct privkey {
 	struct secret secret;
 };
 
+struct mnemonic {
+    char words[BIP39_WORDLIST_LEN];
+    char passphrase[255];
+};
+
 /* marshal/unmarshal functions */
 void fromwire_secret(const u8 **cursor, size_t *max, struct secret *secret);
 void fromwire_privkey(const u8 **cursor, size_t *max, struct privkey *privkey);
+void fromwire_mnemonic(const u8 **cursor, size_t *max, struct mnemonic *mnemonic);
+void towire_mnemonic(u8 **pptr, const struct mnemonic *mnemonic);
 void towire_privkey(u8 **pptr, const struct privkey *privkey);
 void towire_secret(u8 **pptr, const struct secret *secret);
+
 
 #endif /* LIGHTNING_BITCOIN_PRIVKEY_H */

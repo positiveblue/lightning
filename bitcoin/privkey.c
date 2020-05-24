@@ -34,6 +34,11 @@ void towire_secret(u8 **pptr, const struct secret *secret)
 	towire(pptr, secret->data, sizeof(secret->data));
 }
 
+void towire_mnemonic(u8 **pptr, const struct mnemonic *mnemonic) {
+    towire(pptr, mnemonic->words, sizeof(mnemonic->words));
+    towire(pptr, mnemonic->passphrase, sizeof(mnemonic->passphrase));
+}
+
 void fromwire_secret(const u8 **cursor, size_t *max, struct secret *secret)
 {
 	fromwire(cursor, max, secret->data, sizeof(secret->data));
@@ -42,4 +47,9 @@ void fromwire_secret(const u8 **cursor, size_t *max, struct secret *secret)
 void fromwire_privkey(const u8 **cursor, size_t *max, struct privkey *privkey)
 {
 	fromwire_secret(cursor, max, &privkey->secret);
+}
+
+void fromwire_mnemonic(const u8 **cursor, size_t *max, struct mnemonic *mnemonic) {
+        fromwire(cursor, max, mnemonic->words, sizeof(mnemonic->words));
+        fromwire(cursor, max, mnemonic->passphrase, sizeof(mnemonic->passphrase));
 }

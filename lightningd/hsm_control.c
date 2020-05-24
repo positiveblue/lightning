@@ -86,8 +86,8 @@ static unsigned int hsm_msg(struct subd *hsmd,
 
 struct ext_key *hsm_init(struct lightningd *ld)
 {
-	u8 *passphrase;
-	u8 *mnemonic;
+	//u8 *passphrase;
+	//u8 *mnemonic;
 	u8 *msg;
 	int fds[2];
 	struct ext_key *bip32_base;
@@ -112,13 +112,22 @@ struct ext_key *hsm_init(struct lightningd *ld)
 			errx(1, "hsm_secret is encrypted, you need to pass the "
 			        "--encrypted-hsm startup option.");
 	}
-
-	passphrase = tal_dup_arr(tmpctx, u8, (u8 *)ld->config.passphrase,
-				 tal_count(ld->config.passphrase), 1);
-	passphrase[tal_count(ld->config.passphrase)] = '\0';
-	mnemonic = tal_dup_arr(tmpctx, u8, (u8 *)ld->config.mnemonic,
-			       tal_count(ld->config.mnemonic), 1);
-	mnemonic[tal_count(ld->config.mnemonic)] = '\0';
+        //printf(ld->config.passphrase);
+        //printf("\n");
+        //printf("%ld \n", tal_count(&(ld->config.passphrase)));
+        //printf("this is just a test \n");
+        //printf(tal_count(ld->config.passphrase));
+        //printf(ld->config.passphrase);
+	//passphrase = tal(NULL, ld->config.passphrase);
+	//passphrase[tal_count(ld->config.passphrase)] = '\0';
+	//mnemonic = tal_dup_arr(tmpctx, u8, (u8 *)ld->config.mnemonic,
+	//		       tal_count(ld->config.mnemonic), 1);
+	//mnemonic[tal_count(ld->config.mnemonic)] = '\0';
+	if (ld->config.mnemonic_code) {
+		printf("Mnemonic before sending it: \n");
+		printf("mnemonic: %s \n", ld->config.mnemonic_code->words);
+		printf("passphrase: %s\n", ld->config.mnemonic_code->passphrase);
+	}
 
 	ld->hsm_fd = fds[0];
 	if (!wire_sync_write(ld->hsm_fd, towire_hsm_init(tmpctx,
@@ -129,8 +138,7 @@ struct ext_key *hsm_init(struct lightningd *ld)
 							 IFDEV(ld->dev_force_bip32_seed, NULL),
 							 IFDEV(ld->dev_force_channel_secrets, NULL),
 							 IFDEV(ld->dev_force_channel_secrets_shaseed, NULL),
-							 mnemonic,
-							 passphrase)))
+							 ld->config.mnemonic_code)))
 		err(1, "Writing init msg to hsm");
 
 	bip32_base = tal(ld, struct ext_key);
