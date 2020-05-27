@@ -542,79 +542,124 @@ static void create_hsm(int fd)
 	}
 }
 
-static void initialize_secretstuff(struct mnemonic *mnemonic_code) {
-	u8 bip32_seed[BIP39_SEED_LEN_512];
+static void generate_new_mnemonic(struct mnemonic *mnemonic_code)
+{
 	u8 entropy[BIP39_ENTROPY_LEN_256];
-	size_t bip32_seed_len;
-	struct words *words;
 	char *mnemonic_words;
+	struct words *words;
 
-	printf("sizeof mnemonic_code: %ld \n", sizeof(mnemonic_code));
-	/*~ If mnemonic was not provided, generate it. */
-	if (!mnemonic_code->words) {
-		/* By default the mnemonics created automatically do have the emptry srting as passphrase */
-		mnemonic_code->passphrase[0] = '\0';
-		/*~ This is libsodium's cryptographic randomness routine: we assume
-		 * it's doing a good job. */
-		randombytes_buf(entropy, sizeof(entropy));
-		/*~ Get the English list of words (we do not support any other
-		* languages yet). */
-		if (bip39_get_wordlist("en", &words) != WALLY_OK)
-			status_failed(STATUS_FAIL_INTERNAL_ERROR,
-				      "Could not get the BIP39 list of words");
-		/*~ Generate mnemonic from entropy - 24 words separated with
-		 * spaces. */
-		if (bip39_mnemonic_from_bytes(words, entropy, sizeof(entropy),
-					      &mnemonic_words) != WALLY_OK)
-			status_failed(STATUS_FAIL_INTERNAL_ERROR,
-				      "Could not generate mnemonic from entropy");
-		status_unusual("generated mnemonic: %s\n", mnemonic_words);
-		status_unusual("generated passphrase: %s\n", mnemonic_code->passphrase);
-	}
+	/* By default the mnemonics created automatically do have the emptry srting as passphrase */
+	mnemonic_code->passphrase[0] = '\0';
+	/*~ This is libsodium's cryptographic randomness routine: we assume
+		* it's doing a good job. */
+	randombytes_buf(entropy, sizeof(entropy));
+	/*~ Get the English list of words (we do not support any other
+	* languages yet). */
+	if (bip39_get_wordlist("en", &words) != WALLY_OK)
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					"Could not get the BIP39 list of words");
+	/*~ Generate mnemonic from entropy - 24 words separated with
+		* spaces. */
+	if (bip39_mnemonic_from_bytes(words, entropy, sizeof(entropy),
+						&mnemonic_words) != WALLY_OK)
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					"Could not generate mnemonic from entropy");
+	status_unusual("generated mnemonic: %s\n", mnemonic_code->words);
+	status_unusual("generated passphrase: %s\n", mnemonic_code->passphrase);
+}
 
+static void init_secretstuff(struct mnemonic *mnemonic_code) {
+	u8 bip32_seed[BIP39_SEED_LEN_512];
+	size_t bip32_seed_len;
+
+	strcpy(secretstuff.hsm_mnemonic.words, mnemonic_code->words);
+	strcpy(secretstuff.hsm_mnemonic.passphrase, mnemonic_code->passphrase);
+	
 	/*~ Create BIP32 binary seed from mnemonic. */
-	if (bip39_mnemonic_to_seed(mnemonic_code->words, mnemonic_code->passphrase, bip32_seed,
+	if (bip39_mnemonic_to_seed(secretstuff.hsm_mnemonic.words, secretstuff.hsm_mnemonic.passphrase, bip32_seed,
 				   sizeof(bip32_seed),
 				   &bip32_seed_len) != WALLY_OK)
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "Can't convert mnemonic to seed");
-	
+	memcpy(secretstuff.hsm_secret.data, bip32_seed, bip32_seed_len);
 }
 
-/*~ We store our root secret in a "hsm_secret" file (like all of c-lightning,
- * we run in the user's .lightning directory). */
-static void maybe_create_new_hsm(const struct secret *encryption_key, struct mnemonic *mnemonic_code)
-{
-	struct stat st;
+static void create_hsm_file_from_mnemonic(struct mnemonic *mnemonic_code) {
 	int fd = open("hsm_secret", O_CREAT|O_EXCL|O_WRONLY, 0400);
 	if (fd < 0) {
 		/* If this is not the first time we've run, it will exist. */
-		if (errno == EEXIST) {
-			/* We do not want to overwrite important stuff */
-			if (mnemonic_code->words)
-				status_failed(STATUS_FAIL_INTERNAL_ERROR,
+		if (errno == EEXIST)
+			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 						"Custom mnemonic was provided, but the HSM secret already exists");
-			if (stat("hsm_secret", &st) != 0)
-				status_failed(STATUS_FAIL_INTERNAL_ERROR,
-		              "stating: %s", strerror(errno));
-
-			if (st.st_size > 32 || !encryption_key)
-				return;
-			
-			/* If an encryption key was passed with a not yet encrypted hsm_secret,
-		 	 * remove the old one and create an encrypted one. */
-			if (!read_all(fd, &secretstuff.hsm_secret, sizeof(secretstuff.hsm_secret)))
-					status_failed(STATUS_FAIL_INTERNAL_ERROR,
-								"reading: %s", strerror(errno));
-			secretstuff.initialized = true;
-		}
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 		              "creating: %s", strerror(errno));
 	}
 
-	if (!secretstuff.initialized) {
-		initialize_secretstuff(mnemonic_code);
-		secretstuff.initialized = true;
+	init_secretstuff(mnemonic_code);
+	create_hsm(fd);
+
+	/*~ fsync (mostly!) ensures that the file has reached the disk. */
+	if (fsync(fd) != 0) {
+		unlink_noerr("hsm_secret");
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "fsync: %s", strerror(errno));
+	}
+	/*~ This should never fail if fsync succeeded.  But paranoia good, and
+	 * bugs exist. */
+	if (close(fd) != 0) {
+		unlink_noerr("hsm_secret");
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "closing: %s", strerror(errno));
+	}
+	/*~ We actually need to sync the *directory itself* to make sure the
+	 * file exists!  You're only allowed to open directories read-only in
+	 * modern Unix though. */
+	fd = open(".", O_RDONLY);
+	if (fd < 0) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "opening: %s", strerror(errno));
+	}
+	if (fsync(fd) != 0) {
+		unlink_noerr("hsm_secret");
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "fsyncdir: %s", strerror(errno));
+	}
+	close(fd);
+	/*~ status_unusual() is good for things which are interesting and
+	 * definitely won't spam the logs.  Only status_broken() is higher;
+	 * status_info() is lower, then status_debug() and finally
+	 * status_io(). */
+	status_unusual("HSM: created new hsm_secret file");
+}
+
+/*~ We store our root secret in a "hsm_secret" file (like all of c-lightning,
+ * we run in the user's .lightning directory). */
+static void maybe_create_new_hsm(const struct secret *encryption_key, bool random_hsm)
+{
+	/*~ Note that this is opened for write-only, even though the permissions
+	 * are set to read-only.  That's perfectly valid! */
+	status_unusual("what the fuckkkkkkkkkkkkk!...\n");
+	int fd = open("hsm_secret", O_CREAT|O_EXCL|O_WRONLY, 0400);
+	if (fd < 0) {
+		/* If this is not the first time we've run, it will exist. */
+		if (errno == EEXIST)
+			return;
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+		              "creating: %s", strerror(errno));
+	}
+	
+	// check if stat failed because file does not exist
+	status_unusual("what the fuck!...\n");
+
+	if (random_hsm) {
+		struct mnemonic *mnemonic_code;
+		mnemonic_code = malloc(sizeof(struct mnemonic));
+
+		status_unusual("generate new mnemonic...\n");
+
+		generate_new_mnemonic(mnemonic_code);
+		init_secretstuff(mnemonic_code);
+		free(mnemonic_code);
 	}
 
 	/*~ If an encryption_key was provided, store an encrypted seed. */
@@ -662,22 +707,39 @@ static void maybe_create_new_hsm(const struct secret *encryption_key, struct mne
  * file contents are as they will be for future invocations. */
 static void load_hsm(const struct secret *encryption_key)
 {
-	/* The only way that secretstuff is not initialized yet is because hsm_secret file already
-	   existed and it was encrypted. */
-	if (!secretstuff.initialized) {
-		struct stat st;
-		int fd = open("hsm_secret", O_RDONLY);
-		if (fd < 0)
-			status_failed(STATUS_FAIL_INTERNAL_ERROR,
-					"opening: %s", strerror(errno));
-		if (stat("hsm_secret", &st) != 0)
-			status_failed(STATUS_FAIL_INTERNAL_ERROR,
-						"stating: %s", strerror(errno));
+	struct stat st;
+	int fd = open("hsm_secret", O_RDONLY);
+	if (fd < 0)
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "opening: %s", strerror(errno));
+	if (stat("hsm_secret", &st) != 0)
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+		              "stating: %s", strerror(errno));
 
-		// let's double check the precondition for being here
-		if (!encryption_key || st.st_size <= 32)
-			status_failed(STATUS_FAIL_INTERNAL_ERROR, "Unable to load hsm_file");
-		
+	/* If the seed is stored in clear. */
+	if (st.st_size <= 32) {
+		if (!read_all(fd, &secretstuff.hsm_secret, sizeof(secretstuff.hsm_secret)))
+			status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			              "reading: %s", strerror(errno));
+		/* If an encryption key was passed with a not yet encrypted hsm_secret,
+		 * remove the old one and create an encrypted one. */
+		if (encryption_key) {
+			if (close(fd) != 0)
+				status_failed(STATUS_FAIL_INTERNAL_ERROR,
+				              "closing: %s", strerror(errno));
+			if (remove("hsm_secret") != 0)
+				status_failed(STATUS_FAIL_INTERNAL_ERROR,
+				              "removing clear hsm_secret: %s", strerror(errno));
+			maybe_create_new_hsm(encryption_key, false);
+			fd = open("hsm_secret", O_RDONLY);
+			if (fd < 0)
+				status_failed(STATUS_FAIL_INTERNAL_ERROR,
+				              "opening: %s", strerror(errno));
+		}
+	}
+	/*~ If an encryption key was passed and the `hsm_secret` is stored
+	 * encrypted, recover the seed from the cipher. */
+	if (encryption_key && st.st_size > 32) {
 		crypto_secretstream_xchacha20poly1305_state crypto_state;
 		u8 header[crypto_secretstream_xchacha20poly1305_HEADERBYTES];
 		/* The cipher size is static with xchacha20poly1305 */
@@ -702,9 +764,9 @@ static void load_hsm(const struct secret *encryption_key)
 			 * an error message. */
 			exit(1);
 		}
-		/* else { handled in hsm_control/ maybe_create_new_hsm} */
-		close(fd);
 	}
+	/* else { handled in hsm_control } */
+	close(fd);
 
 	populate_secretstuff();
 }
@@ -760,7 +822,15 @@ static struct io_plan *init_hsm(struct io_conn *conn,
 	/* Once we have read the init message we know which params the master
 	 * will use */
 	c->chainparams = chainparams;
-	maybe_create_new_hsm(hsm_encryption_key, hsm_mnemonic_code);
+		status_unusual("value for hsm_mnemonic_code: %p \n", hsm_mnemonic_code);
+
+	if (hsm_mnemonic_code) {
+		status_unusual("create_hsm_file_from_mnemonic");
+		create_hsm_file_from_mnemonic(hsm_mnemonic_code);
+	}
+	status_unusual("calling maybe_create");
+
+	maybe_create_new_hsm(hsm_encryption_key, true);
 	load_hsm(hsm_encryption_key);
 
 	/*~ We don't need the hsm_secret encryption key anymore.
